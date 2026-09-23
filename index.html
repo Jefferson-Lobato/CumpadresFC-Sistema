@@ -1,178 +1,30 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Cumpadres FC - Comandas</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cumpadres FC - PDV V2.2</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <section id="loginView" class="login">
-    <div class="login-card">
-      <h1>Cumpadres FC</h1>
-      <p>Sistema de Comandas</p>
-      <input id="loginEmail" type="email" placeholder="E-mail">
-      <input id="loginPassword" type="password" placeholder="Senha">
-      <button id="loginBtn" class="primary">Entrar</button>
-      <button id="signupBtn" class="secondary">Criar primeiro acesso</button>
-      <small id="loginMsg"></small>
-    </div>
-  </section>
+<div id="login" class="login"><div class="login-card"><div class="brand">⚽ CUMPADRES <b>FC</b></div><p>PDV • Futebol e Cerveja</p><input id="loginEmail" type="email" placeholder="E-mail"><input id="loginPassword" type="password" placeholder="Senha"><button onclick="login()">Entrar</button><button class="secondary" onclick="signup()">Criar primeiro acesso</button><small>O primeiro usuário criado vira administrador.</small></div></div>
+<div id="app" class="hidden">
+<header><button class="menu" onclick="toggleSidebar()">☰</button><div class="brand">⚽ CUMPADRES FC</div><div class="top-info"><span id="shiftLabel">Sem caixa</span><button onclick="toggleValues()">👁 <span id="eyeText">Ocultar</span></button><span id="userName"></span><button onclick="logout()">Sair</button></div></header>
+<aside id="sidebar"><nav><button onclick="go('dashboard')">🏠 Dashboard</button><button onclick="go('orders')">📋 Comandas</button><button onclick="go('kitchen')">🍳 Cozinha</button><button onclick="go('cash')">💰 Caixa</button><button onclick="go('prints')">🖨 Impressões</button><div id="adminNav"><button onclick="go('products')">🍔 Produtos</button><button onclick="go('categories')">🏷 Categorias</button><button onclick="go('printers')">🖨 Impressoras</button><button onclick="go('users')">👥 Usuários</button><button onclick="go('settings')">⚙ Configurações</button></div></nav></aside>
+<main>
+<section id="dashboard" class="page"><div class="page-head"><div><h1>Dashboard</h1><div id="shiftDate"></div></div><div class="shift-nav"><button onclick="changeShift(-1)">◀</button><select id="shiftSelect" onchange="selectShift(this.value)"></select><button onclick="changeShift(1)">▶</button></div></div><div class="stats"><div class="stat"><span>Vendas</span><strong data-money id="dashSales">R$ 0,00</strong></div><div class="stat"><span>Comandas abertas</span><strong id="dashOpen">0</strong></div><div class="stat"><span>Comandas fechadas</span><strong id="dashClosed">0</strong></div><div class="stat"><span>Pedidos diretos</span><strong id="dashDirect">0</strong></div><div class="stat"><span>Entradas</span><strong data-money id="dashEntries">R$ 0,00</strong></div><div class="stat"><span>Saídas</span><strong data-money id="dashExits">R$ 0,00</strong></div></div><div class="quick"><button onclick="newOrder()">＋ Nova comanda</button><button onclick="openDirectKitchen()">🍳 Pedido cozinha</button><button onclick="go('cash')">💰 Caixa</button></div></section>
+<section id="orders" class="page hidden"><div class="page-head"><h1>Comandas</h1><button onclick="newOrder()">＋ Nova comanda</button></div><div class="filters"><input id="orderSearch" placeholder="Buscar cliente, mesa ou número" oninput="renderOrders()"><button class="filter active" onclick="setOrderFilter('open',this)">Abertas</button><button class="filter" onclick="setOrderFilter('closed',this)">Fechadas</button></div><div id="ordersGrid" class="cards"></div></section>
+<section id="kitchen" class="page hidden"><div class="page-head"><h1>Central da Cozinha</h1><button onclick="openDirectKitchen()">＋ Pedido direto</button></div><div class="tabs"><button onclick="setKitchenFilter('active')">Ativos</button><button onclick="setKitchenFilter('READY')">Prontos</button><button onclick="setKitchenFilter('DELIVERED')">Entregues</button></div><div id="kitchenGrid" class="cards"></div></section>
+<section id="cash" class="page hidden"><div class="page-head"><h1>Caixa</h1><div id="cashActions"></div></div><div id="cashContent"></div><h2>Histórico</h2><div id="cashHistory" class="table-wrap"></div></section>
+<section id="prints" class="page hidden"><div class="page-head"><h1>Impressões</h1><button onclick="loadPrints()">Atualizar</button></div><div id="printsGrid" class="table-wrap"></div></section>
+<section id="products" class="page hidden admin-page"><div class="page-head"><h1>Produtos</h1><button onclick="productForm()">＋ Produto</button></div><div id="productsList" class="table-wrap"></div></section>
+<section id="categories" class="page hidden admin-page"><div class="page-head"><h1>Categorias</h1><button onclick="categoryForm()">＋ Categoria</button></div><div id="categoriesList" class="table-wrap"></div></section>
+<section id="printers" class="page hidden admin-page"><div class="page-head"><h1>Impressoras</h1><button onclick="printerForm()">＋ Impressora</button></div><div id="printersList" class="table-wrap"></div></section>
+<section id="users" class="page hidden admin-page"><div class="page-head"><h1>Usuários</h1></div><div id="usersList" class="table-wrap"></div></section>
+<section id="settings" class="page hidden admin-page"><div class="page-head"><h1>Configurações</h1></div><div id="settingsForm"></div></section>
+</main></div>
 
-  <section id="appView" class="hidden">
-    <header class="topbar">
-      <div><strong>Cumpadres FC</strong><span id="userInfo"></span></div>
-      <div class="top-actions">
-        <span id="cashBadge" class="badge">Caixa</span>
-        <button id="refreshBtn">Atualizar</button>
-        <button id="logoutBtn">Sair</button>
-      </div>
-    </header>
-
-    <main class="layout">
-      <aside class="sidebar">
-        <button class="nav active" data-section="commandsSection">Comandas</button>
-        <button class="nav" data-section="kitchenSection">Pedido Cozinha</button>
-        <button class="nav admin-only" data-section="productsSection">Produtos</button>
-        <button class="nav admin-only" data-section="categoriesSection">Categorias</button>
-        <button class="nav" data-section="cashSection">Caixa</button>
-      </aside>
-
-      <div class="content">
-        <section id="commandsSection" class="section">
-          <div class="section-head">
-            <div><h2>Comandas</h2><p>Comandas abertas em tempo real</p></div>
-            <button id="newCommandBtn" class="primary">+ Nova comanda</button>
-          </div>
-          <div id="ordersGrid" class="cards"></div>
-        </section>
-
-        <section id="kitchenSection" class="section hidden">
-          <div class="section-head">
-            <div><h2>Pedido Cozinha</h2><p>Envia direto para a impressora da cozinha sem abrir comanda.</p></div>
-            <button id="newKitchenBtn" class="primary">+ Novo pedido</button>
-          </div>
-          <div id="kitchenGrid" class="cards"></div>
-        </section>
-
-        <section id="productsSection" class="section hidden admin-only">
-          <div class="section-head"><h2>Produtos</h2><button id="newProductBtn" class="primary">+ Produto</button></div>
-          <div id="productsTable"></div>
-        </section>
-
-        <section id="categoriesSection" class="section hidden admin-only">
-          <div class="section-head"><h2>Categorias</h2><button id="newCategoryBtn" class="primary">+ Categoria</button></div>
-          <div id="categoriesTable"></div>
-        </section>
-
-        <section id="cashSection" class="section hidden">
-          <div class="section-head"><div><h2>Caixa</h2><p id="cashStatusText"></p></div></div>
-          <div class="cash-panel">
-            <input id="openingBalance" type="number" step="0.01" placeholder="Saldo inicial">
-            <button id="openCashBtn" class="primary">Abrir caixa</button>
-            <hr>
-            <input id="closingBalance" type="number" step="0.01" placeholder="Saldo final informado">
-            <button id="closeCashBtn" class="danger">Fechar caixa</button>
-          </div>
-        </section>
-      </div>
-    </main>
-  </section>
-
-  <!-- Command modal -->
-  <div id="commandModal" class="modal hidden">
-    <div class="modal-box wide">
-      <div class="modal-head"><h3 id="commandModalTitle">Nova comanda</h3><button class="close" data-close="commandModal">×</button></div>
-      <div class="form-grid">
-        <input id="commandCustomer" placeholder="Nome do cliente">
-        <input id="commandTable" placeholder="Mesa">
-      </div>
-      <div class="product-layout">
-        <div>
-          <div id="categoryFilters" class="filters"></div>
-          <div id="commandProducts" class="product-grid"></div>
-          <button id="customItemBtn" class="secondary">+ Item avulso</button>
-        </div>
-        <div class="cart">
-          <h4>Itens da comanda</h4>
-          <div id="commandCart"></div>
-          <div class="cart-total">Total: <strong id="commandTotal">R$ 0,00</strong></div>
-          <div class="modal-actions">
-            <button id="saveCommandBtn" class="primary">Salvar</button>
-            <button id="closeCommandModalBtn" class="secondary">Cancelar</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Close modal -->
-  <div id="closeModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-head"><h3>Fechar comanda</h3><button class="close" data-close="closeModal">×</button></div>
-      <p>Total: <strong id="closeTotal"></strong></p>
-      <select id="paymentMethod"><option value="dinheiro">Dinheiro</option><option value="pix">PIX</option><option value="debito">Débito</option><option value="credito">Crédito</option><option value="outro">Outro</option></select>
-      <input id="paymentAmount" type="number" step="0.01" placeholder="Valor recebido">
-      <div class="modal-actions">
-        <button id="closePrintBtn" class="primary">Imprimir e fechar</button>
-        <button id="closeNoPrintBtn" class="secondary">Fechar sem imprimir</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Kitchen modal -->
-  <div id="kitchenModal" class="modal hidden">
-    <div class="modal-box wide">
-      <div class="modal-head"><h3>Pedido direto para cozinha</h3><button class="close" data-close="kitchenModal">×</button></div>
-      <div class="form-grid">
-        <input id="kitchenCustomer" placeholder="Nome do cliente">
-        <input id="kitchenTable" placeholder="Mesa">
-      </div>
-      <div id="kitchenProducts" class="product-grid"></div>
-      <div class="cart">
-        <h4>Itens</h4>
-        <div id="kitchenCart"></div>
-        <div class="modal-actions"><button id="sendKitchenBtn" class="primary">Enviar e imprimir</button></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Product modal -->
-  <div id="productModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-head"><h3>Produto</h3><button class="close" data-close="productModal">×</button></div>
-      <input id="productId" type="hidden">
-      <input id="productName" placeholder="Nome">
-      <input id="productPrice" type="number" step="0.01" placeholder="Preço">
-      <select id="productCategory"></select>
-      <label class="check"><input id="productKitchen" type="checkbox"> Enviar para cozinha</label>
-      <label class="check"><input id="productActive" type="checkbox" checked> Ativo</label>
-      <div class="modal-actions"><button id="saveProductBtn" class="primary">Salvar</button></div>
-    </div>
-  </div>
-
-  <div id="categoryModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-head"><h3>Categoria</h3><button class="close" data-close="categoryModal">×</button></div>
-      <input id="categoryId" type="hidden">
-      <input id="categoryName" placeholder="Nome da categoria">
-      <div class="modal-actions"><button id="saveCategoryBtn" class="primary">Salvar</button></div>
-    </div>
-  </div>
-
-  <div id="customModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-head"><h3>Item avulso</h3><button class="close" data-close="customModal">×</button></div>
-      <input id="customName" placeholder="Descrição">
-      <input id="customPrice" type="number" step="0.01" placeholder="Preço">
-      <input id="customQty" type="number" min="1" step="1" value="1">
-      <label class="check"><input id="customKitchen" type="checkbox"> Enviar para cozinha</label>
-      <div class="modal-actions"><button id="addCustomBtn" class="primary">Adicionar</button></div>
-    </div>
-  </div>
-
-  <div id="toast" class="toast"></div>
-  <script src="app.js"></script>
-</body>
-</html>
+<div id="modal" class="modal hidden"><div class="modal-card"><button class="close" onclick="closeModal()">×</button><div id="modalBody"></div></div></div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body></html>

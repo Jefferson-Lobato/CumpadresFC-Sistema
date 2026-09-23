@@ -1,231 +1,74 @@
-const SUPABASE_URL = 'COLE_AQUI_SUA_SUPABASE_URL';
-const SUPABASE_ANON_KEY = 'COLE_AQUI_SUA_SUPABASE_ANON_KEY';
-
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const $ = id => document.getElementById(id);
-const money = v => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
-let session, profile, categories=[], products=[], orders=[], commandItems=[], kitchenCart=[];
-let editingOrder=null, closeOrderId=null, currentCategory='all';
-
-function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)}
-function openModal(id){$(id).classList.remove('hidden')}
-function closeModal(id){$(id).classList.add('hidden')}
+const SUPABASE_URL='COLE_AQUI_SUA_SUPABASE_URL';
+const SUPABASE_ANON_KEY='COLE_AQUI_SUA_SUPABASE_ANON_KEY';
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+let me=null, profile=null, categories=[], products=[], orders=[], orderItems=[], kitchenOrders=[], currentShift=null, shifts=[], selectedShiftId=null;
+let orderFilter='open', kitchenFilter='active', valuesVisible=false, currentOrder=null, cart=[], commandCategory=null;
+const $=id=>document.getElementById(id); const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n||0));
+function toast(msg){const e=$('toast');e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2500)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-
-async function init(){
-  sb.auth.onAuthStateChange(async(_e,s)=>{session=s;if(s) await loadApp(); else showLogin()});
-  const {data}=await sb.auth.getSession(); session=data.session;
-  if(session) await loadApp(); else showLogin();
-}
-function showLogin(){$('loginView').classList.remove('hidden');$('appView').classList.add('hidden')}
-async function loadApp(){
-  $('loginView').classList.add('hidden');$('appView').classList.remove('hidden');
-  const p=await sb.from('profiles').select('*').eq('id',session.user.id).single();
-  profile=p.data;
-  $('userInfo').textContent=`${profile?.full_name||session.user.email} • ${profile?.role||''}`;
-  document.querySelectorAll('.admin-only').forEach(x=>x.style.display=profile?.role==='admin'?'':'none');
-  await loadAll(); subscribeRealtime();
-}
-async function loadAll(){
-  const [c,p,o]=await Promise.all([
-    sb.from('categories').select('*').order('name'),
-    sb.from('products').select('*, categories(name)').order('name'),
-    sb.from('orders').select('*').order('number',{ascending:false})
-  ]);
-  categories=c.data||[]; products=p.data||[]; orders=o.data||[];
-  renderOrders();renderProducts();renderCategories();renderProductSelectors();renderCommandProducts();renderKitchenProducts();await loadCash();
-}
-function subscribeRealtime(){
-  sb.channel('pos-live').on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>loadAll())
-    .on('postgres_changes',{event:'*',schema:'public',table:'kitchen_orders'},()=>renderKitchenOrders())
-    .subscribe();
-}
-function nav(){
-  document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{
-    document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));b.classList.add('active');
-    document.querySelectorAll('.section').forEach(x=>x.classList.add('hidden'));$(b.dataset.section).classList.remove('hidden');
-    if(b.dataset.section==='kitchenSection') renderKitchenOrders();
-  });
-}
-function renderOrders(){
-  const open=orders.filter(o=>o.status==='open');
-  $('ordersGrid').innerHTML=open.length?open.map(o=>`
-    <article class="order-card">
-      <h3>Comanda #${o.number}</h3>
-      <div>${esc(o.customer_name||'Cliente não informado')} • Mesa ${esc(o.table_number||'-')}</div>
-      <div class="total">${money(o.total)}</div>
-      <span class="status">ABERTA</span>
-      <div class="card-actions" style="margin-top:12px">
-        <button onclick="editOrder('${o.id}')">Abrir</button>
-        <button onclick="askClose('${o.id}')">Fechar</button>
-        <button onclick="printOrder('${o.id}')">Imprimir</button>
-        <button class="danger" onclick="cancelOrder('${o.id}')">Excluir</button>
-      </div>
-    </article>`).join(''):'<p>Nenhuma comanda aberta.</p>';
-}
-async function renderKitchenOrders(){
-  const {data}=await sb.from('kitchen_orders').select('*, kitchen_order_items(*)').order('number',{ascending:false}).limit(30);
-  $('kitchenGrid').innerHTML=(data||[]).map(k=>`
-    <article class="kitchen-card">
-      <h3>Cozinha #${k.number}</h3>
-      <div>${esc(k.customer_name||'Cliente')} • Mesa ${esc(k.table_number||'-')}</div>
-      <p><span class="status">${esc(k.status)}</span></p>
-      ${(k.kitchen_order_items||[]).map(i=>`<div>${i.quantity}x ${esc(i.product_name)}</div>`).join('')}
-      <div class="card-actions" style="margin-top:10px">
-        <button onclick="setKitchenStatus('${k.id}','PREPARING')">Em preparo</button>
-        <button onclick="setKitchenStatus('${k.id}','READY')">Pronto</button>
-        <button onclick="setKitchenStatus('${k.id}','DELIVERED')">Entregue</button>
-      </div>
-    </article>`).join('')||'<p>Nenhum pedido.</p>';
-}
-async function setKitchenStatus(id,status){await sb.from('kitchen_orders').update({status}).eq('id',id);renderKitchenOrders()}
-function renderCommandProducts(){
-  const list=currentCategory==='all'?products:products.filter(p=>p.category_id===currentCategory);
-  $('commandProducts').innerHTML=list.filter(p=>p.active).map(p=>`
-    <button class="product" onclick="addCartProduct('${p.id}')"><strong>${esc(p.name)}</strong><small>${money(p.price)} ${p.send_to_kitchen?'• 🍳 cozinha':''}</small></button>`).join('');
-  $('categoryFilters').innerHTML=`<button class="${currentCategory==='all'?'active':''}" onclick="filterCategory('all')">Todos</button>`+
-    categories.filter(c=>c.active).map(c=>`<button class="${currentCategory===c.id?'active':''}" onclick="filterCategory('${c.id}')">${esc(c.name)}</button>`).join('');
-}
-function filterCategory(id){currentCategory=id;renderCommandProducts()}
-function addCartProduct(id){
-  const p=products.find(x=>x.id===id);if(!p)return;
-  let x=commandItems.find(i=>i.product_id===id&&!i.voided);
-  if(x)x.quantity++;
-  else commandItems.push({id:null,product_id:p.id,product_name:p.name,unit_price:Number(p.price),quantity:1,send_to_kitchen:p.send_to_kitchen,kitchen_sent_qty:0,kitchen_cancelled_qty:0,voided:false});
-  renderCommandCart();
-}
-function renderCommandCart(){
-  $('commandCart').innerHTML=commandItems.filter(i=>!i.voided).map((i,idx)=>`
-    <div class="cart-row">
-      <div>${esc(i.product_name)}${i.send_to_kitchen?' 🍳':''}</div>
-      <div class="qty"><button onclick="changeQty(${idx},-1)">−</button>${i.quantity}<button onclick="changeQty(${idx},1)">+</button></div>
-      <div>${money(i.unit_price*i.quantity)}</div>
-      <button onclick="removeCart(${idx})">×</button>
-    </div>`).join('')||'<small>Nenhum item.</small>';
-  const total=commandItems.filter(i=>!i.voided).reduce((s,i)=>s+i.quantity*i.unit_price,0);
-  $('commandTotal').textContent=money(total);
-}
-function changeQty(idx,d){commandItems[idx].quantity=Math.max(1,Number(commandItems[idx].quantity)+d);renderCommandCart()}
-function removeCart(idx){commandItems[idx].voided=true;commandItems[idx].quantity=0;renderCommandCart()}
-function openNewCommand(){
-  editingOrder=null;commandItems=[];$('commandModalTitle').textContent='Nova comanda';$('commandCustomer').value='';$('commandTable').value='';renderCommandCart();openModal('commandModal');
-}
-async function editOrder(id){
-  editingOrder=orders.find(o=>o.id===id);if(!editingOrder)return;
-  const r=await sb.from('order_items').select('*').eq('order_id',id).order('created_at');
-  commandItems=(r.data||[]).map(x=>({...x}));
-  $('commandModalTitle').textContent=`Comanda #${editingOrder.number}`;
-  $('commandCustomer').value=editingOrder.customer_name||'';$('commandTable').value=editingOrder.table_number||'';
-  renderCommandCart();openModal('commandModal');
-}
-async function saveCommand(){
-  const customer=$('commandCustomer').value.trim(),table=$('commandTable').value.trim();
-  if(!editingOrder){
-    const r=await sb.from('orders').insert({customer_name:customer,table_number:table,opened_by:session.user.id}).select().single();
-    if(r.error){toast(r.error.message);return} editingOrder=r.data;
-  }else await sb.from('orders').update({customer_name:customer,table_number:table}).eq('id',editingOrder.id);
-
-  const old=(await sb.from('order_items').select('*').eq('order_id',editingOrder.id)).data||[];
-  for(const item of commandItems){
-    if(!item.id){
-      if(item.voided)continue;
-      const r=await sb.from('order_items').insert({
-        order_id:editingOrder.id,product_id:item.product_id,product_name:item.product_name,unit_price:item.unit_price,
-        quantity:item.quantity,send_to_kitchen:item.send_to_kitchen
-      }).select().single();
-      if(r.error){toast(r.error.message);continue}
-      if(item.send_to_kitchen){
-        await sendKitchenBatch(editingOrder,r.data,item.quantity,'ORDER');
-      }
-    }else{
-      const previous=old.find(x=>x.id===item.id);if(!previous)continue;
-      const effective=Number(previous.kitchen_sent_qty)-Number(previous.kitchen_cancelled_qty);
-      if(!item.voided && item.quantity>effective && item.send_to_kitchen){
-        await sendKitchenBatch(editingOrder,item,item.quantity-effective,'ORDER');
-      }
-      if((item.voided?0:item.quantity)<effective && item.send_to_kitchen){
-        await sendKitchenBatch(editingOrder,item,effective-(item.voided?0:item.quantity),'CANCEL');
-      }
-      await sb.from('order_items').update({
-        quantity:item.voided?0:item.quantity,voided:!!item.voided,
-        product_name:item.product_name,unit_price:item.unit_price,send_to_kitchen:item.send_to_kitchen
-      }).eq('id',item.id);
-    }
-  }
-  const currentIds=new Set(commandItems.filter(i=>i.id).map(i=>i.id));
-  for(const o of old){
-    if(!currentIds.has(o.id) && !o.voided){
-      const effective=Number(o.kitchen_sent_qty)-Number(o.kitchen_cancelled_qty);
-      if(effective>0 && o.send_to_kitchen) await sendKitchenBatch(editingOrder,o,effective,'CANCEL');
-      if(effective>0) await sb.from('order_items').update({quantity:0,voided:true}).eq('id',o.id);
-      else await sb.from('order_items').delete().eq('id',o.id);
-    }
-  }
-  toast('Comanda salva');closeModal('commandModal');await loadAll();
-}
-async function sendKitchenBatch(order,item,qty,type='ORDER'){
-  if(!qty)return;
-  const payload=[{order_item_id:item.id,product_id:item.product_id,product_name:item.product_name,quantity:qty,notes:item.notes||''}];
-  const r=await sb.rpc('create_kitchen_batch',{p_order_id:order.id,p_customer_name:order.customer_name||'',p_table_number:order.table_number||'',p_items:payload,p_order_type:type});
-  if(r.error)toast('Erro cozinha: '+r.error.message);
-}
-async function cancelOrder(id){
-  if(!confirm('Excluir/cancelar esta comanda?'))return;
-  await sb.from('orders').update({status:'cancelled'}).eq('id',id);await loadAll();
-}
-function askClose(id){
-  const o=orders.find(x=>x.id===id);if(!o)return;
-  closeOrderId=id;$('closeTotal').textContent=money(o.total);$('paymentAmount').value=Number(o.total).toFixed(2);openModal('closeModal');
-}
-async function finishClose(print){
-  const amount=Number($('paymentAmount').value);const o=orders.find(x=>x.id===closeOrderId);
-  if(Math.abs(amount-Number(o.total))>.009){toast('O valor recebido deve ser igual ao total.');return}
-  const r=await sb.rpc('close_order',{p_order_id:closeOrderId,p_payments:[{method:$('paymentMethod').value,amount}],p_print:print});
-  if(r.error){toast(r.error.message);return}
-  closeModal('closeModal');await loadAll();toast('Comanda fechada');
-}
-async function printOrder(id){
-  const o=orders.find(x=>x.id===id);if(!o)return;
-  const items=(await sb.from('order_items').select('*').eq('order_id',id).eq('voided',false)).data||[];
-  const html=`<div class="receipt"><h2>Cumpadres FC</h2><b>Comanda #${o.number}</b><p>Mesa: ${esc(o.table_number||'-')}<br>Cliente: ${esc(o.customer_name||'-')}</p>${items.map(i=>`<div>${i.quantity}x ${esc(i.product_name)}<span>${money(i.quantity*i.unit_price)}</span></div>`).join('')}<hr><h3>TOTAL ${money(o.total)}</h3></div>`;
-  const w=window.open('','_blank','width=360,height=700');w.document.write(`<style>@page{size:58mm auto;margin:0}body{font:12px Arial;width:54mm;margin:2mm}.receipt h2{text-align:center}.receipt div{display:flex;justify-content:space-between;margin:4px 0}</style>${html}`);w.document.close();w.focus();w.print();
-}
-function renderKitchenProducts(){
-  $('kitchenProducts').innerHTML=products.filter(p=>p.active&&p.send_to_kitchen).map(p=>`<button class="product" onclick="addKitchenProduct('${p.id}')"><strong>${esc(p.name)}</strong><small>${money(p.price)}</small></button>`).join('');
-}
-function addKitchenProduct(id){const p=products.find(x=>x.id===id);let x=kitchenCart.find(i=>i.product_id===id);if(x)x.quantity++;else kitchenCart.push({product_id:p.id,product_name:p.name,quantity:1});renderKitchenCart()}
-function renderKitchenCart(){$('kitchenCart').innerHTML=kitchenCart.map((i,n)=>`<div class="cart-row"><div>${esc(i.product_name)}</div><div>${i.quantity}</div><div></div><button onclick="kitchenCart.splice(${n},1);renderKitchenCart()">×</button></div>`).join('')||'<small>Nenhum item.</small>'}
-async function sendDirectKitchen(){
-  if(!kitchenCart.length){toast('Adicione itens');return}
-  const r=await sb.rpc('create_kitchen_batch',{p_order_id:null,p_customer_name:$('kitchenCustomer').value,p_table_number:$('kitchenTable').value,p_items:kitchenCart,p_order_type:'ORDER'});
-  if(r.error){toast(r.error.message);return}
-  kitchenCart=[];renderKitchenCart();closeModal('kitchenModal');toast('Pedido enviado para a cozinha e colocado na fila de impressão');renderKitchenOrders();
-}
-function renderProducts(){
-  $('productsTable').innerHTML=`<table class="table"><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Cozinha</th><th></th></tr>${products.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.categories?.name||'-')}</td><td>${money(p.price)}</td><td>${p.send_to_kitchen?'Sim':'Não'}</td><td><button onclick="editProduct('${p.id}')">Editar</button></td></tr>`).join('')}</table>`;
-}
-function renderCategories(){$('categoriesTable').innerHTML=`<table class="table"><tr><th>Categoria</th><th>Status</th><th></th></tr>${categories.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.active?'Ativa':'Inativa'}</td><td><button onclick="editCategory('${c.id}')">Editar</button></td></tr>`).join('')}</table>`}
-function renderProductSelectors(){$('productCategory').innerHTML='<option value="">Sem categoria</option>'+categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
-function editProduct(id){const p=products.find(x=>x.id===id);$('productId').value=p.id;$('productName').value=p.name;$('productPrice').value=p.price;$('productCategory').value=p.category_id||'';$('productKitchen').checked=p.send_to_kitchen;$('productActive').checked=p.active;openModal('productModal')}
-async function saveProduct(){
-  const data={name:$('productName').value.trim(),price:Number($('productPrice').value),category_id:$('productCategory').value||null,send_to_kitchen:$('productKitchen').checked,active:$('productActive').checked};
-  const id=$('productId').value;const r=id?await sb.from('products').update(data).eq('id',id):await sb.from('products').insert(data);
-  if(r.error){toast(r.error.message);return}closeModal('productModal');await loadAll();
-}
-function editCategory(id){const c=categories.find(x=>x.id===id);$('categoryId').value=c.id;$('categoryName').value=c.name;openModal('categoryModal')}
-async function saveCategory(){const name=$('categoryName').value.trim(),id=$('categoryId').value;const r=id?await sb.from('categories').update({name}).eq('id',id):await sb.from('categories').insert({name});if(r.error)toast(r.error.message);else{closeModal('categoryModal');await loadAll()}}
-async function loadCash(){
-  const r=await sb.from('cash_sessions').select('*').eq('status','open').order('opened_at',{ascending:false}).limit(1).maybeSingle();
-  const open=!!r.data;$('cashBadge').textContent=open?'CAIXA ABERTO':'CAIXA FECHADO';$('cashBadge').style.background=open?'#e9f8ee':'#ffecec';$('cashStatusText').textContent=open?`Aberto em ${new Date(r.data.opened_at).toLocaleString('pt-BR')}`:'Caixa fechado';
-}
-async function openCash(){const v=Number($('openingBalance').value||0);const r=await sb.from('cash_sessions').insert({opened_by:session.user.id,opening_balance:v});if(r.error)toast(r.error.message);else{toast('Caixa aberto');loadCash()}}
-async function closeCash(){const r=await sb.from('cash_sessions').select('id').eq('status','open').order('opened_at',{ascending:false}).limit(1).maybeSingle();if(!r.data){toast('Nenhum caixa aberto');return}const v=Number($('closingBalance').value||0);const x=await sb.from('cash_sessions').update({status:'closed',closed_by:session.user.id,closing_balance:v,closed_at:new Date().toISOString()}).eq('id',r.data.id);if(x.error)toast(x.error.message);else{toast('Caixa fechado');loadCash()}}
-$('loginBtn').onclick=async()=>{const r=await sb.auth.signInWithPassword({email:$('loginEmail').value,password:$('loginPassword').value});if(r.error)$('loginMsg').textContent=r.error.message}
-$('signupBtn').onclick=async()=>{const r=await sb.auth.signUp({email:$('loginEmail').value,password:$('loginPassword').value,data:{full_name:prompt('Nome')}});$('loginMsg').textContent=r.error?r.error.message:'Cadastro criado. Se o Supabase exigir confirmação, confirme o e-mail.'}
-$('logoutBtn').onclick=()=>sb.auth.signOut();$('refreshBtn').onclick=loadAll;$('newCommandBtn').onclick=openNewCommand;$('saveCommandBtn').onclick=saveCommand;$('closeCommandModalBtn').onclick=()=>closeModal('commandModal');
-$('closePrintBtn').onclick=()=>finishClose(true);$('closeNoPrintBtn').onclick=()=>finishClose(false);$('newKitchenBtn').onclick=()=>{kitchenCart=[];renderKitchenCart();$('kitchenCustomer').value='';$('kitchenTable').value='';openModal('kitchenModal')};$('sendKitchenBtn').onclick=sendDirectKitchen;
-$('newProductBtn').onclick=()=>{$('productId').value='';$('productName').value='';$('productPrice').value='';$('productKitchen').checked=false;$('productActive').checked=true;openModal('productModal')};
-$('saveProductBtn').onclick=saveProduct;$('newCategoryBtn').onclick=()=>{$('categoryId').value='';$('categoryName').value='';openModal('categoryModal')};$('saveCategoryBtn').onclick=saveCategory;
-$('openCashBtn').onclick=openCash;$('closeCashBtn').onclick=closeCash;$('customItemBtn').onclick=()=>openModal('customModal');
-$('addCustomBtn').onclick=()=>{const name=$('customName').value.trim(),price=Number($('customPrice').value),qty=Number($('customQty').value||1);if(!name||price<0)return toast('Preencha nome e preço');commandItems.push({id:null,product_id:null,product_name:name,unit_price:price,quantity:qty,send_to_kitchen:$('customKitchen').checked,kitchen_sent_qty:0,kitchen_cancelled_qty:0,voided:false});closeModal('customModal');renderCommandCart()};
-document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeModal(b.dataset.close));nav();init();
+async function boot(){const {data:{session}}=await sb.auth.getSession();if(session){me=session.user;await loadUser();} else showLogin();sb.auth.onAuthStateChange(async(_e,s)=>{if(s){me=s.user;await loadUser()}else showLogin()});}
+function showLogin(){ $('login').classList.remove('hidden');$('app').classList.add('hidden') }
+async function loadUser(){const {data,error}=await sb.from('profiles').select('*').eq('id',me.id).single();if(error){toast(error.message);return}profile=data;$('login').classList.add('hidden');$('app').classList.remove('hidden');$('userName').textContent=profile.full_name||me.email; $('adminNav').classList.toggle('hidden',profile.role!=='admin'); await loadAll(); go('dashboard')}
+async function login(){const {error}=await sb.auth.signInWithPassword({email:$('loginEmail').value,password:$('loginPassword').value});if(error)toast(error.message)}
+async function signup(){const email=$('loginEmail').value,password=$('loginPassword').value;if(!email||!password)return toast('Informe e-mail e senha');const {error}=await sb.auth.signUp({email,password,options:{data:{full_name:prompt('Nome do usuário')||''}}});if(error)toast(error.message);else toast('Usuário criado. Confirme o e-mail se solicitado.')}
+async function logout(){await sb.auth.signOut()}
+function toggleSidebar(){$('sidebar').classList.toggle('open')}
+function go(id){document.querySelectorAll('.page').forEach(p=>p.classList.add('hidden'));$(id).classList.remove('hidden');if(id==='dashboard')loadDashboard();if(id==='orders')renderOrders();if(id==='kitchen')renderKitchen();if(id==='cash')loadCash();if(id==='prints')loadPrints();if(id==='products')renderProducts();if(id==='categories')renderCategories();if(id==='printers')renderPrinters();if(id==='users')renderUsers();if(id==='settings')renderSettings();if(innerWidth<900)$('sidebar').classList.remove('open')}
+function toggleValues(){valuesVisible=!valuesVisible;$('eyeText').textContent=valuesVisible?'Ocultar':'Mostrar';document.querySelectorAll('[data-money]').forEach(e=>e.classList.toggle('money-hidden',!valuesVisible));}
+async function loadAll(){await Promise.all([loadCatalog(),loadOrders(),loadKitchen(),loadShifts()]);subscribe()}
+async function loadCatalog(){let r=await sb.from('categories').select('*').eq('active',true).order('sort_order');categories=r.data||[];r=await sb.from('products').select('*,categories(name)').eq('active',true).order('sort_order');products=r.data||[]}
+async function loadOrders(){let r=await sb.from('orders').select('*').order('created_at',{ascending:false});orders=r.data||[];r=await sb.from('order_items').select('*');orderItems=r.data||[]}
+async function loadKitchen(){let r=await sb.from('kitchen_orders').select('*,kitchen_order_items(*)').order('created_at',{ascending:false}).limit(100);kitchenOrders=r.data||[]}
+async function loadShifts(){let r=await sb.from('cash_sessions').select('*').order('opened_at',{ascending:false});shifts=r.data||[];currentShift=shifts.find(s=>s.status==='open')||shifts[0]||null;selectedShiftId=currentShift?.id||null;renderShiftSelect()}
+function renderShiftSelect(){const e=$('shiftSelect');e.innerHTML=shifts.map(s=>`<option value="${s.id}">${new Date(s.opened_at).toLocaleString('pt-BR')} • ${s.status==='open'?'ABERTO':'FECHADO'}</option>`).join('');if(selectedShiftId)e.value=selectedShiftId;renderShiftLabel()}
+function renderShiftLabel(){if(currentShift)$('shiftLabel').textContent=`Caixa: ${currentShift.status==='open'?'ABERTO':'FECHADO'} • ${new Date(currentShift.opened_at).toLocaleDateString('pt-BR')}`;else $('shiftLabel').textContent='Sem caixa'}
+function selectShift(id){selectedShiftId=id;currentShift=shifts.find(s=>s.id===id)||null;renderShiftLabel();loadDashboard()}
+function changeShift(delta){let i=shifts.findIndex(s=>s.id===selectedShiftId);if(i<0)return;let n=shifts[i+delta];if(n)selectShift(n.id)}
+async function loadDashboard(){if(!selectedShiftId){$('shiftDate').textContent='Nenhum turno cadastrado';return}const {data,error}=await sb.rpc('dashboard_summary',{p_shift:selectedShiftId});if(error)return toast(error.message);$('shiftDate').textContent=`Turno: ${new Date(currentShift.opened_at).toLocaleString('pt-BR')} ${currentShift.closed_at?'→ '+new Date(currentShift.closed_at).toLocaleString('pt-BR'): '→ em andamento'}`;$('dashSales').textContent=money(data.sales_orders);$('dashOpen').textContent=data.orders_open;$('dashClosed').textContent=data.orders_closed;$('dashDirect').textContent=data.direct_kitchen;$('dashEntries').textContent=money(data.cash_entries);$('dashExits').textContent=money(data.cash_exits);toggleValues()}
+function setOrderFilter(f,b){orderFilter=f;document.querySelectorAll('.filter').forEach(x=>x.classList.remove('active'));b.classList.add('active');renderOrders()}
+function renderOrders(){const q=($('orderSearch')?.value||'').toLowerCase();let list=orders.filter(o=>o.status===orderFilter&&(String(o.number).includes(q)||o.customer_name.toLowerCase().includes(q)||o.table_number.toLowerCase().includes(q)));$('ordersGrid').innerHTML=list.map(o=>{let items=orderItems.filter(i=>i.order_id===o.id&&!i.voided&&i.quantity);return `<div class="card"><h3>Comanda #${o.number}</h3><div class="meta">${esc(o.customer_name||'Sem nome')} • Mesa ${esc(o.table_number||'-')}</div><div class="meta">${new Date(o.created_at).toLocaleString('pt-BR')} ${o.closed_at?'• fechada '+new Date(o.closed_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):''}</div><div class="meta">${items.length} item(ns)</div><div class="total" data-money>${money(o.total)}</div><div class="actions">${o.status==='open'?`<button onclick="editOrder('${o.id}')">Abrir</button><button class="success" onclick="closeOrder('${o.id}')">Fechar</button><button onclick="printOrder('${o.id}')">🖨</button>`:`<button onclick="viewOrder('${o.id}')">Visualizar</button><button class="warning" onclick="reopenOrder('${o.id}')">↩ Reabrir</button><button onclick="printOrder('${o.id}')">🖨</button>`}</div></div>`}).join('')||'<div class="notice">Nenhuma comanda encontrada.</div>';applyValueState()}
+function applyValueState(){document.querySelectorAll('[data-money]').forEach(e=>e.classList.toggle('money-hidden',!valuesVisible))}
+async function newOrder(){if(!currentShift||currentShift.status!=='open')return toast('Abra o caixa antes de criar comandas');const customer=prompt('Nome do cliente:')||'';const table=prompt('Mesa:')||'';const {data,error}=await sb.rpc('create_order',{p_customer:customer,p_table:table});if(error)return toast(error.message);await loadOrders();editOrder(data.id)}
+function editOrder(id){currentOrder=orders.find(o=>o.id===id);cart=orderItems.filter(i=>i.order_id===id&&!i.voided&&i.quantity>0).map(i=>({...i}));commandCategory=null;renderCommandModal()}
+function viewOrder(id){currentOrder=orders.find(o=>o.id===id);cart=orderItems.filter(i=>i.order_id===id&&!i.voided&&i.quantity>0).map(i=>({...i}));renderCommandModal(true)}
+function renderCommandModal(readonly=false){$('modalBody').innerHTML=`<h2>Comanda #${currentOrder.number}</h2><div class="meta">Cliente: ${esc(currentOrder.customer_name)} • Mesa: ${esc(currentOrder.table_number)}</div><div class="command-layout"><div><div class="cat-buttons"><button class="secondary" onclick="commandCategory=null;renderCommandModal(${readonly})">Todos</button>${categories.map(c=>`<button class="secondary" onclick="commandCategory='${c.id}';renderCommandModal(${readonly})">${esc(c.name)}</button>`).join('')}</div><div class="product-grid">${products.filter(p=>!commandCategory||p.category_id===commandCategory).map(p=>`<button class="product-btn" ${readonly?'disabled':''} onclick="addProduct('${p.id}')"><b>${esc(p.name)}</b><small>${money(p.price)} ${p.send_to_kitchen?'🍳':''}</small></button>`).join('')}</div><button class="secondary" ${readonly?'disabled':''} onclick="customItem()">＋ Item não cadastrado</button></div><div class="cart"><h3>Itens</h3>${cart.map((i,idx)=>`<div class="cart-row"><div><b>${esc(i.product_name)}</b><small class="meta">${money(i.unit_price)} ${i.send_to_kitchen?'• cozinha':''}</small></div><div class="qty"><button ${readonly?'disabled':''} onclick="changeQty(${idx},-1)">−</button><b>${i.quantity}</b><button ${readonly?'disabled':''} onclick="changeQty(${idx},1)">+</button></div><button class="danger" ${readonly?'disabled':''} onclick="removeCart(${idx})">×</button></div>`).join('')||'<div class="meta">Nenhum item</div>'}<div class="grand" data-money>${money(cart.reduce((a,i)=>a+i.quantity*i.unit_price,0))}</div>${readonly?'':`<button class="success" onclick="saveCommand()">Salvar comanda</button>`}</div></div>`;$('modal').classList.remove('hidden');applyValueState()}
+function addProduct(pid){const p=products.find(x=>x.id===pid);let i=cart.findIndex(x=>x.product_id===pid&&!x.voided);if(i>=0)cart[i].quantity++;else cart.push({id:null,product_id:p.id,product_name:p.name,unit_price:p.price,quantity:1,send_to_kitchen:p.send_to_kitchen,kitchen_sent_qty:0,kitchen_cancelled_qty:0,notes:''});renderCommandModal()}
+function customItem(){const name=prompt('Nome do item:');if(!name)return;const price=Number((prompt('Valor:')||'0').replace(',','.'));if(!Number.isFinite(price))return toast('Valor inválido');const kitchen=confirm('Enviar este item para a cozinha?');cart.push({id:null,product_id:null,product_name:name,unit_price:price,quantity:1,send_to_kitchen:kitchen,kitchen_sent_qty:0,kitchen_cancelled_qty:0,notes:''});renderCommandModal()}
+function changeQty(i,d){cart[i].quantity=Math.max(0,cart[i].quantity+d);if(!cart[i].quantity)cart.splice(i,1);renderCommandModal()}
+function removeCart(i){cart[i].quantity=0;renderCommandModal()}
+async function saveCommand(){for(const c of cart){if(c.id){const old=orderItems.find(x=>x.id===c.id);await sb.from('order_items').update({quantity:c.quantity,product_name:c.product_name,unit_price:c.unit_price,send_to_kitchen:c.send_to_kitchen}).eq('id',c.id)}else{const {data}=await sb.from('order_items').insert({order_id:currentOrder.id,product_id:c.product_id,product_name:c.product_name,unit_price:c.unit_price,quantity:c.quantity,send_to_kitchen:c.send_to_kitchen,notes:c.notes||''}).select().single();c.id=data.id}}
+for(const old of orderItems.filter(x=>x.order_id===currentOrder.id&&!x.voided)){const now=cart.find(x=>x.id===old.id);const newQty=now?now.quantity:0;const effectiveSent=Math.max(0,old.kitchen_sent_qty-old.kitchen_cancelled_qty);if(old.send_to_kitchen&&newQty>effectiveSent&&newQty>old.quantity){await kitchenBatch(currentOrder,{order_item_id:old.id,product_id:old.product_id,product_name:old.product_name,quantity:newQty-old.quantity,notes:old.notes},'ORDER')}if(old.send_to_kitchen&&newQty<effectiveSent){const cancel=effectiveSent-newQty;if(cancel>0)await kitchenBatch(currentOrder,{order_item_id:old.id,product_id:old.product_id,product_name:old.product_name,quantity:cancel,notes:'CANCELAMENTO'},'CANCEL')}if(!newQty&&effectiveSent===0)await sb.from('order_items').delete().eq('id',old.id);else if(!newQty)await sb.from('order_items').update({voided:true}).eq('id',old.id)}
+await loadOrders();closeModal();toast('Comanda salva')}
+async function kitchenBatch(order,item,type){const {error}=await sb.rpc('create_kitchen_batch',{p_order_id:order?.id||null,p_customer:order?.customer_name||'',p_table:order?.table_number||'',p_items:[item],p_type:type});if(error)toast(error.message)}
+async function closeOrder(id){currentOrder=orders.find(o=>o.id===id);const total=Number(currentOrder.total);const html=`<h2>Fechar comanda #${currentOrder.number}</h2><div class="total">Total: ${money(total)}</div><div class="form-grid"><label>Dinheiro<input id="payDin" type="number" step="0.01" value="0"></label><label>PIX<input id="payPix" type="number" step="0.01" value="0"></label><label>Débito<input id="payDeb" type="number" step="0.01" value="0"></label><label>Crédito<input id="payCre" type="number" step="0.01" value="0"></label></div><button class="secondary" onclick="finishClose(false)">Fechar sem imprimir</button> <button class="success" onclick="finishClose(true)">🖨 Imprimir e fechar</button>`;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden')}
+async function finishClose(print){const vals=[['dinheiro',$('payDin').value],['pix',$('payPix').value],['debito',$('payDeb').value],['credito',$('payCre').value]].map(([method,v])=>({method,amount:Number(v||0)})).filter(x=>x.amount>0);const total=vals.reduce((a,x)=>a+x.amount,0);if(Math.abs(total-Number(currentOrder.total))>.01)return toast('A soma dos pagamentos precisa ser igual ao total');const {error}=await sb.rpc('close_order',{p_order:currentOrder.id,p_payments:vals,p_print:print});if(error)return toast(error.message);await loadAll();closeModal();toast('Comanda fechada');if(print)printOrder(currentOrder.id)}
+async function reopenOrder(id){const reason=prompt('Motivo da reabertura:')||'';const {error}=await sb.rpc('reopen_order',{p_order:id,p_reason:reason});if(error)toast(error.message);else{await loadAll();toast('Comanda reaberta')}}
+function closeModal(){$('modal').classList.add('hidden');$('modalBody').innerHTML=''}
+function printOrder(id){const o=orders.find(x=>x.id===id);const its=orderItems.filter(x=>x.order_id===id&&!x.voided&&x.quantity);openPrint(`<div class="print-ticket"><h2>CUMPADRES FC</h2><div class="line"></div><b>COMANDA #${o.number}</b><br>Cliente: ${esc(o.customer_name)}<br>Mesa: ${esc(o.table_number)}<br>${new Date(o.created_at).toLocaleString('pt-BR')}<div class="line"></div><table>${its.map(i=>`<tr><td>${i.quantity}x ${esc(i.product_name)}</td><td>${money(i.quantity*i.unit_price)}</td></tr>`).join('')}</table><div class="line"></div><b>TOTAL: ${money(o.total)}</b></div>`)}
+function openPrint(html){const w=window.open('','_blank','width=400,height=700');if(!w)return toast('Permita pop-ups para imprimir');w.document.write(`<html><head><title>Impressão</title><style>@page{size:58mm auto;margin:2mm}body{width:58mm;margin:0;font-family:Arial;font-size:11px}.print-ticket{width:58mm}h2{text-align:center;font-size:15px}.line{border-top:1px dashed #000;margin:7px 0}table{width:100%;border-collapse:collapse}td:last-child{text-align:right}</style></head><body>${html}<script>window.onload=()=>{window.print()}<\/script></body></html>`);w.document.close()}
+function setKitchenFilter(f){kitchenFilter=f;renderKitchen()}
+function renderKitchen(){let list=kitchenOrders;if(kitchenFilter==='active')list=list.filter(k=>!['DELIVERED','CANCELLED'].includes(k.status));else list=list.filter(k=>k.status===kitchenFilter);$('kitchenGrid').innerHTML=list.map(k=>`<div class="card"><h3>Pedido #${k.number}</h3><div class="meta">${k.order_type==='CANCEL'?'⚠ CANCELAMENTO • ':''}${esc(k.customer_name||'Sem nome')} • Mesa ${esc(k.table_number||'-')}</div><div class="meta">${new Date(k.created_at).toLocaleString('pt-BR')}</div>${(k.kitchen_order_items||[]).map(i=>`<div class="kitchen-item"><b>${i.quantity}x</b> ${esc(i.product_name)}</div>`).join('')}<div class="actions" style="margin-top:10px">${k.status==='NEW'?`<button onclick="setKitchen('${k.id}','PREPARING')">Preparar</button>`:''}${k.status==='PREPARING'?`<button class="success" onclick="setKitchen('${k.id}','READY')">Pronto</button>`:''}${k.status==='READY'?`<button class="success" onclick="setKitchen('${k.id}','DELIVERED')">Entregue</button>`:''}</div></div>`).join('')||'<div class="notice">Nenhum pedido.</div>'}
+async function setKitchen(id,status){const {error}=await sb.from('kitchen_orders').update({status}).eq('id',id);if(error)toast(error.message);else{await loadKitchen();renderKitchen()}}
+function openDirectKitchen(){const ks=products.filter(p=>p.send_to_kitchen);let direct=[];const render=()=>{$('modalBody').innerHTML=`<h2>Pedido direto para cozinha</h2><div class="form-grid"><label>Cliente<input id="dkCustomer"></label><label>Mesa<input id="dkTable"></label></div><div class="product-grid">${ks.map(p=>`<button class="product-btn" onclick="addDirect('${p.id}')"><b>${esc(p.name)}</b><small>${money(p.price)}</small></button>`).join('')}</div><div class="cart">${direct.map((x,i)=>`<div class="cart-row"><div>${x.quantity}x ${esc(x.product_name)}</div><div class="qty"><button onclick="directQty(${i},-1)">−</button><b>${x.quantity}</b><button onclick="directQty(${i},1)">+</button></div><button class="danger" onclick="directQty(${i},-999)">×</button></div>`).join('')}</div><button class="success" onclick="sendDirect()">🖨 Enviar para cozinha</button>`};window.addDirect=id=>{const p=ks.find(x=>x.id===id),i=direct.findIndex(x=>x.product_id===id);if(i>=0)direct[i].quantity++;else direct.push({product_id:p.id,product_name:p.name,quantity:1,notes:''});render()};window.directQty=(i,d)=>{direct[i].quantity=Math.max(0,direct[i].quantity+d);if(!direct[i].quantity)direct.splice(i,1);render()};window.sendDirect=async()=>{if(!direct.length)return toast('Adicione itens');const {error}=await sb.rpc('create_kitchen_batch',{p_order_id:null,p_customer:$('dkCustomer').value,p_table:$('dkTable').value,p_items:direct,p_type:'ORDER'});if(error)toast(error.message);else{closeModal();await loadKitchen();toast('Pedido enviado para cozinha')}};render();$('modal').classList.remove('hidden')}
+async function loadCash(){await loadShifts();const s=shifts.find(x=>x.id===selectedShiftId);if(!s){$('cashContent').innerHTML='<div class="notice">Nenhum caixa registrado. <button onclick="openCash()">Abrir caixa</button></div>';return}const {data:mv}=await sb.from('cash_movements').select('*').eq('cash_session_id',s.id).order('created_at',{ascending:false});const entries=(mv||[]).filter(x=>x.type==='entry').reduce((a,x)=>a+Number(x.amount),0),exits=(mv||[]).filter(x=>x.type==='exit').reduce((a,x)=>a+Number(x.amount),0),sales=orders.filter(o=>o.status==='closed'&&o.shift_id===s.id).reduce((a,o)=>a+Number(o.total),0),expected=Number(s.opening_balance)+sales+entries-exits;$('cashContent').innerHTML=`<div class="cash-grid"><div class="big-box">Abertura<strong data-money>${money(s.opening_balance)}</strong></div><div class="big-box">Vendas<strong data-money>${money(sales)}</strong></div><div class="big-box">Entradas<strong data-money>${money(entries)}</strong></div><div class="big-box">Saídas<strong data-money>${money(exits)}</strong></div><div class="big-box">Esperado<strong data-money>${money(expected)}</strong></div><div class="big-box">Fechamento<strong data-money>${money(s.closing_balance)}</strong></div></div><div class="quick"><button onclick="movement('entry')">＋ Entrada</button><button class="danger" onclick="movement('exit')">− Saída</button>${s.status==='open'?`<button class="success" onclick="closeCash()">Fechar caixa</button>`:''}${profile.role==='admin'?`<button class="warning" onclick="editCash('${s.id}','opening_balance',${s.opening_balance})">Editar abertura</button>`:''}</div><div class="notice">Observação abertura: ${esc(s.notes_open||'-')}<br>Observação fechamento: ${esc(s.notes_close||'-')}</div>`;applyValueState();renderCashHistory()}
+function renderCashHistory(){$('cashHistory').innerHTML=`<table class="table"><thead><tr><th>Data</th><th>Status</th><th>Abertura</th><th>Fechamento</th><th>Observação</th></tr></thead><tbody>${shifts.map(s=>`<tr><td>${new Date(s.opened_at).toLocaleString('pt-BR')}</td><td><span class="pill">${s.status}</span></td><td data-money>${money(s.opening_balance)}</td><td data-money>${money(s.closing_balance)}</td><td>${esc(s.notes_close||s.notes_open||'')}</td></tr>`).join('')}</tbody></table>`;applyValueState()}
+async function openCash(){const opening=Number((prompt('Valor de abertura:')||'0').replace(',','.'));const notes=prompt('Observação da abertura:')||'';const {error}=await sb.rpc('open_cash',{p_opening:opening,p_notes:notes});if(error)toast(error.message);else{await loadAll();go('cash');toast('Caixa aberto')}}
+async function closeCash(){const closing=Number((prompt('Valor físico no fechamento:')||'0').replace(',','.'));const notes=prompt('Observação do fechamento:')||'';const {error}=await sb.rpc('close_cash',{p_session:selectedShiftId,p_closing:closing,p_notes:notes});if(error)toast(error.message);else{await loadAll();go('cash');toast('Caixa fechado')}}
+async function movement(type){const desc=prompt(type==='entry'?'Descrição da entrada:':'Descrição da saída:');if(!desc)return;const amount=Number((prompt('Valor:')||'0').replace(',','.'));if(!amount)return;const {error}=await sb.rpc('add_cash_movement',{p_session:selectedShiftId,p_type:type,p_description:desc,p_amount:amount,p_method:'dinheiro'});if(error)toast(error.message);else loadCash()}
+async function editCash(id,field,old){const v=Number((prompt('Novo valor:',old)||old).replace(',','.'));const reason=prompt('Motivo da alteração:')||'';const {error}=await sb.rpc('update_cash_value',{p_session:id,p_field:field,p_new:v,p_reason:reason});if(error)toast(error.message);else loadCash()}
+async function loadPrints(){const {data}=await sb.from('print_jobs').select('*,printers(name)').order('created_at',{ascending:false}).limit(100);$('printsGrid').innerHTML=`<table class="table"><thead><tr><th>Data/hora</th><th>Tipo</th><th>Status</th><th>Impressora</th><th>Tentativas</th></tr></thead><tbody>${(data||[]).map(p=>`<tr><td>${new Date(p.created_at).toLocaleString('pt-BR')}</td><td>${p.job_type}</td><td>${p.status}</td><td>${esc(p.printers?.name||'-')}</td><td>${p.attempts}</td></tr>`).join('')}</tbody></table>`}
+function renderProducts(){$('productsList').innerHTML=`<table class="table"><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Cozinha</th><th>Ação</th></tr></thead><tbody>${products.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.categories?.name||'-')}</td><td data-money>${money(p.price)}</td><td>${p.send_to_kitchen?'SIM':'NÃO'}</td><td><button onclick="productForm('${p.id}')">Editar</button></td></tr>`).join('')}</tbody></table>`;applyValueState()}
+async function productForm(id){const p=products.find(x=>x.id===id)||{};$('modalBody').innerHTML=`<h2>${id?'Editar':'Novo'} produto</h2><div class="form-grid"><label>Nome<input id="pfName" value="${esc(p.name||'')}"></label><label>Preço<input id="pfPrice" type="number" step="0.01" value="${p.price||0}"></label><label>Categoria<select id="pfCat">${categories.map(c=>`<option value="${c.id}" ${c.id===p.category_id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label><input id="pfKitchen" type="checkbox" ${p.send_to_kitchen?'checked':''}> Enviar para cozinha</label></div><button class="success" onclick="saveProduct('${id||''}')">Salvar</button>`;$('modal').classList.remove('hidden')}
+async function saveProduct(id){const obj={name:$('pfName').value,price:Number($('pfPrice').value),category_id:$('pfCat').value,send_to_kitchen:$('pfKitchen').checked};const r=id?await sb.from('products').update(obj).eq('id',id):await sb.from('products').insert(obj);if(r.error)toast(r.error.message);else{closeModal();await loadCatalog();renderProducts()}}
+function renderCategories(){$('categoriesList').innerHTML=`<table class="table"><thead><tr><th>Nome</th><th>Ativa</th><th>Ação</th></tr></thead><tbody>${categories.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.active?'SIM':'NÃO'}</td><td><button onclick="categoryForm('${c.id}')">Editar</button></td></tr>`).join('')}</tbody></table>`}
+function categoryForm(id){const c=categories.find(x=>x.id===id)||{};$('modalBody').innerHTML=`<h2>Categoria</h2><input id="catName" value="${esc(c.name||'')}"><button onclick="saveCategory('${id||''}')">Salvar</button>`;$('modal').classList.remove('hidden')}
+async function saveCategory(id){const obj={name:$('catName').value};const r=id?await sb.from('categories').update(obj).eq('id',id):await sb.from('categories').insert(obj);if(r.error)toast(r.error.message);else{closeModal();await loadCatalog();renderCategories()}}
+async function renderPrinters(){const {data}=await sb.from('printers').select('*').order('created_at');$('printersList').innerHTML=`<table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Largura</th><th>Impressora Windows</th><th>Ativa</th></tr></thead><tbody>${(data||[]).map(p=>`<tr><td>${esc(p.name)}</td><td>${p.type}</td><td>${p.width_mm}mm</td><td>${esc(p.windows_printer_name||'-')}</td><td>${p.active?'SIM':'NÃO'}</td></tr>`).join('')}</tbody></table>`}
+function printerForm(){ $('modalBody').innerHTML=`<h2>Nova impressora</h2><div class="form-grid"><label>Nome<input id="prName"></label><label>Tipo<select id="prType"><option>KITCHEN</option><option>RECEIPT</option></select></label><label>Largura<select id="prWidth"><option>58</option><option>80</option></select></label><label>Nome no Windows<input id="prWin"></label></div><button onclick="savePrinter()">Salvar</button>`;$('modal').classList.remove('hidden')}
+async function savePrinter(){const {error}=await sb.from('printers').insert({name:$('prName').value,type:$('prType').value,width_mm:Number($('prWidth').value),windows_printer_name:$('prWin').value});if(error)toast(error.message);else{closeModal();renderPrinters()}}
+async function renderUsers(){const {data}=await sb.from('profiles').select('*').order('created_at');$('usersList').innerHTML=`<table class="table"><thead><tr><th>Nome</th><th>ID</th><th>Função</th><th>Ativo</th><th>Ação</th></tr></thead><tbody>${(data||[]).map(u=>`<tr><td>${esc(u.full_name)}</td><td>${u.id.slice(0,8)}...</td><td>${u.role}</td><td>${u.active?'SIM':'NÃO'}</td><td>${u.id===me.id?'':`<button onclick="changeRole('${u.id}','${u.role}')">Alterar</button>`}</td></tr>`).join('')}</tbody></table>`}
+async function changeRole(id,current){const role=prompt('Nova função: admin, caixa ou cozinha',current);if(!['admin','caixa','cozinha'].includes(role))return;const {error}=await sb.from('profiles').update({role}).eq('id',id);if(error)toast(error.message);else renderUsers()}
+async function renderSettings(){const {data}=await sb.from('app_settings').select('*').eq('id',1).single();$('settingsForm').innerHTML=`<div class="card"><label>Nome<input id="setName" value="${esc(data?.bar_name||'Cumpadres FC')}"></label><label>Endereço<input id="setAddress" value="${esc(data?.address||'')}"></label><label>Telefone<input id="setPhone" value="${esc(data?.phone||'')}"></label><button onclick="saveSettings()">Salvar</button></div>`}
+async function saveSettings(){const {error}=await sb.from('app_settings').upsert({id:1,bar_name:$('setName').value,address:$('setAddress').value,phone:$('setPhone').value});if(error)toast(error.message);else toast('Configurações salvas')}
+function subscribe(){sb.channel('pdv-v22').on('postgres_changes',{event:'*',schema:'public',table:'orders'},async()=>{await loadOrders();renderOrders();loadDashboard()}).on('postgres_changes',{event:'*',schema:'public',table:'order_items'},async()=>{await loadOrders();renderOrders()}).on('postgres_changes',{event:'*',schema:'public',table:'kitchen_orders'},async()=>{await loadKitchen();renderKitchen()}).on('postgres_changes',{event:'*',schema:'public',table:'cash_sessions'},async()=>{await loadShifts();loadDashboard()}).subscribe()}
+boot();
