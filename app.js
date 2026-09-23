@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 const SUPABASE_URL='COLE_AQUI_SUA_SUPABASE_URL';
 const SUPABASE_ANON_KEY='COLE_AQUI_SUA_SUPABASE_ANON_KEY';
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
@@ -5,6 +6,20 @@ let me=null, profile=null, categories=[], products=[], orders=[], orderItems=[],
 let orderFilter='open', kitchenFilter='active', valuesVisible=false, currentOrder=null, cart=[], commandCategory=null;
 const $=id=>document.getElementById(id); const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n||0));
 function toast(msg){const e=$('toast');e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2500)}
+=======
+const SUPABASE_URL = 'https://zigmzokkjwbmjzirdmjt.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppZ216b2trandibWp6aXJkbWp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAxNjUyMjQsImV4cCI6MjEwNTc0MTIyNH0.qM0qTHgN7vGFhyYtrGnGqH4KNFkkOFZJJo7ESKYtO4w';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+const money = v => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+let session, profile, categories=[], products=[], orders=[], commandItems=[], kitchenCart=[];
+let editingOrder=null, closeOrderId=null, currentCategory='all';
+
+function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)}
+function openModal(id){$(id).classList.remove('hidden')}
+function closeModal(id){$(id).classList.add('hidden')}
+>>>>>>> 100ef476a0f2b24d7442bbc048b48445f542b2c4
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 async function boot(){const {data:{session}}=await sb.auth.getSession();if(session){me=session.user;await loadUser();} else showLogin();sb.auth.onAuthStateChange(async(_e,s)=>{if(s){me=s.user;await loadUser()}else showLogin()});}
 function showLogin(){ $('login').classList.remove('hidden');$('app').classList.add('hidden') }
