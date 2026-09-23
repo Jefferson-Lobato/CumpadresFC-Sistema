@@ -1,0 +1,5 @@
+{
+  "supabaseUrl": "https://SEU-PROJETO.supabase.co",
+  "supabaseServiceKey": "COLE_AQUI_A_SERVICE_ROLE_KEY",
+  "pollIntervalMs": 1200
+}
