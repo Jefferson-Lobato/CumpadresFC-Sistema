@@ -1,5 +1,5 @@
-const SUPABASE_URL='COLE_AQUI_SUA_SUPABASE_URL';
-const SUPABASE_ANON_KEY='COLE_AQUI_SUA_SUPABASE_ANON_KEY';
+const SUPABASE_URL='https://cpypwdsljyriswyiitap.supabase.co';
+const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNweXB3ZHNsanlyaXN3eWlpdGFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMDc5NjIsImV4cCI6MjEwNTc4Mzk2Mn0.hIK29r4PTIct4RhzMN3jYf0n7pj8pdEHxjnifrQEPuY';
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
 let me=null, profile=null, categories=[], products=[], orders=[], orderItems=[], kitchenOrders=[], currentShift=null, shifts=[], selectedShiftId=null;
 let orderFilter='open', kitchenFilter='active', valuesVisible=false, currentOrder=null, cart=[], commandCategory=null;
